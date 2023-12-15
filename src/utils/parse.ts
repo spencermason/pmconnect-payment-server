@@ -20,20 +20,9 @@ const headers = {
   'X-Parse-REST-API-Key': process.env.X_PARSE_REST_API_KEY,
 };
 
-function removeUndefined(obj: any) {
-  if (typeof obj !== 'object') return;
-  for (const _key in obj) {
-    const key = _key as keyof typeof obj;
-    const val = obj[key];
-    if (val === undefined) delete obj[key];
-    if (typeof val === 'object') removeUndefined(obj);
-  }
-  return obj;
-}
-
 const userEndpoint = `${URL}/users/me`;
 export async function getUserData(req: Request): Promise<any> {
-  const sessionToken = req.headers['X-Parse-Session-Token'];
+  const sessionToken = req.headers['x-parse-session-token'];
   if (!(typeof sessionToken === 'string')) throw new Error();
   const query = await fetch(userEndpoint, {
     headers: { ...headers, 'X-Parse-Session-Token': sessionToken },
