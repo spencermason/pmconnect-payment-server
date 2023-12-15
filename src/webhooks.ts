@@ -1,8 +1,9 @@
 import { Request, RequestHandler } from 'express';
-import Stripe from 'stripe';
 import Parse from 'parse/node';
+import Stripe from 'stripe';
 
-import { getOrNew, manageSubscriptionStatusChange, stripe } from './stripe';
+import { getDate, stripe } from './stripe';
+import { getOrNew } from './utils/parse';
 
 async function getStripeEvent(req: Request): Promise<Stripe.Event> {
   const sig = req.headers['stripe-signature'];
@@ -86,11 +87,10 @@ async function handleEvent(event: Stripe.Event) {
     case 'customer.subscription.updated':
     case 'customer.subscription.deleted': {
       const subscription = event.data.object as Stripe.Subscription;
-      await Promise.all([
-        manageSubscriptionStatusChange(subscription),
-        event.type === 'customer.subscription.updated' &&
-          addBillingAddress(subscription),
-      ]);
+      await manageSubscriptionStatusChange(subscription);
+      // can't update user billing address because of some parse rules
+      // event.type === 'customer.subscription.updated' &&
+      //   addBillingAddress(subscription),
       break;
     }
     case 'checkout.session.completed': {
@@ -100,10 +100,9 @@ async function handleEvent(event: Stripe.Event) {
       const subscription = await getSubscriptionFromCheckoutSession(
         checkoutSession
       );
-      await Promise.all([
-        manageSubscriptionStatusChange(subscription),
-        addBillingAddress(subscription),
-      ]);
+      await manageSubscriptionStatusChange(subscription);
+      // can't update user billing address because of some parse rules
+      // addBillingAddress(subscription),
       break;
     }
     default:
@@ -116,16 +115,14 @@ function getId(product: string | { id: string } | null) {
   return typeof product == 'string' ? product : product.id;
 }
 
-const Product = Parse.Object.extend('Product');
 async function upsertProduct(data: Stripe.Product) {
   const product = await getOrNew('Product', getId(data));
   product.set('active', data.active);
   product.set('name', data.name);
   product.set('metadata', data.metadata);
-  await product.save();
+  await product.save({ useMasterKey: true });
 }
 
-const Price = Parse.Object.extend('Price');
 async function upsertPrice(data: Stripe.Price) {
   const price = await getOrNew('Price', getId(data));
   price.set('active', data.active);
@@ -135,7 +132,7 @@ async function upsertPrice(data: Stripe.Price) {
   price.set('metadata', data.metadata);
   price.set('interval', data.recurring?.interval);
   price.set('intervalCount', data.recurring?.interval_count);
-  await price.save();
+  await price.save({ useMasterKey: true });
 }
 
 async function getSubscriptionFromCheckoutSession({
@@ -163,14 +160,54 @@ async function getPaymentMethodFromSubscription({
 }
 
 async function addBillingAddress(subscription: Stripe.Subscription) {
-  const { clientId } = subscription.metadata;
+  const { client_id: clientId } = subscription.metadata;
   if (!clientId) throw new Error('user id not found in subscription metadata');
 
   const paymentMethod = await getPaymentMethodFromSubscription(subscription);
-  const { address, phone, name } = paymentMethod.billing_details;
+  const { address, phone } = paymentMethod.billing_details;
 
-  const user = await getOrNew('User', clientId);
-  user.set('address', address ?? undefined);
-  user.set('phone', phone ?? undefined);
-  user.set('name', name ?? undefined);
+  const query = new Parse.Query(Parse.User);
+  const user = await query.get(clientId, { useMasterKey: true });
+
+  if (!user) throw new Error(`user not found in database with id ${clientId}`);
+
+  user.set('billingAddress', address ?? undefined);
+  phone && user.set('phone', phone);
+  await user.save({ useMasterKey: true });
+}
+
+export async function manageSubscriptionStatusChange(
+  subscription: Stripe.Subscription
+) {
+  const { client_id: clientId } = subscription.metadata;
+  if (!clientId) {
+    throw new Error('user id not found in subscription metadata');
+  }
+
+  const userQuery = new Parse.Query(Parse.User);
+  const [user, dbSubscription] = await Promise.all([
+    userQuery.get(clientId, { useMasterKey: true }),
+    getOrNew('Subscription', subscription.id),
+  ]);
+
+  if (!user) throw new Error(`user not found in database with id ${clientId}`);
+
+  dbSubscription.set('stripeId', subscription.id);
+  dbSubscription.set('user', user);
+  dbSubscription.set('status', subscription.status);
+  dbSubscription.set('metadata', subscription.metadata);
+  dbSubscription.set('cancelAtPeriodEnd', subscription.cancel_at_period_end);
+  dbSubscription.set('created', getDate(subscription.created));
+  dbSubscription.set(
+    'currentPeriodStart',
+    getDate(subscription.current_period_start)
+  );
+  dbSubscription.set(
+    'currentPeriodEnd',
+    getDate(subscription.current_period_end)
+  );
+  dbSubscription.set('endedAt', getDate(subscription.ended_at));
+  dbSubscription.set('cancelAt', getDate(subscription.cancel_at));
+  dbSubscription.set('canceledAt', getDate(subscription.canceled_at));
+  await dbSubscription.save({ useMasterKey: true });
 }

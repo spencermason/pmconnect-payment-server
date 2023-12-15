@@ -1,9 +1,9 @@
 import './utils/env';
+import './utils/parse';
 
 import express from 'express';
 
 import routes from './routes';
-import './utils/parse';
 
 const server = express();
 

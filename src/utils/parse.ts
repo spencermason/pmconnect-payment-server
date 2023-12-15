@@ -1,18 +1,16 @@
 import { Request } from 'express';
-import _Parse from 'parse/node';
+import Parse from 'parse/node';
 
 const URL = process.env.API_URL;
 if (!URL) throw new Error('Missing API_URL environment variable');
 
-_Parse.serverURL = URL; // This is your Server URL
+Parse.serverURL = URL; // This is your Server URL
 // Remember to inform BOTH the Back4App Application ID AND the JavaScript KEY
-_Parse.initialize(
+Parse.initialize(
   'zZGgs8haFNqzgyxYcITqpg2LNaGfW9urx0kiCePj',
   'TQKe7DN6KUAFFCzlJQPZs3ZpO6b36B9ZlKS73OeB',
   'wsypaZ78jIYXPuaydakBAYGvne7CJnzWMcLqsNYG'
 );
-
-const graphQLUrl = `${URL}/qraphql`;
 
 const headers = {
   'X-Parse-Master-Key': process.env.X_PARSE_MASTER_KEY,
@@ -32,30 +30,13 @@ export async function getUserData(req: Request): Promise<any> {
   return user;
 }
 
-// export async function setObjData(className: string, id: string, set: any) {
-//   removeUndefined(set);
-//   let fieldString = '';
-//   for (const field in set) {
-//     if (fieldString !== '') fieldString += ',\n';
-//     fieldString += `${field}: "${set[field]}"`;
-//   }
-//   const queryStr = `mutation UpdateObject {
-//     update(className: "${className}", objectId: "${id}", fields: { ${fieldString} }) {
-//       updatedAt
-//     }
-//   }`;
-//   const query = await fetch(graphQLUrl, { body: queryStr, headers });
-//   if (!query.ok) throw new Error();
-//   return await query.json();
-// }
+export async function getOrNew(className: string, stripeId: string) {
+  const query = new Parse.Query(className);
+  const object = await query
+    .equalTo('stripeId', stripeId)
+    .first({ useMasterKey: true });
+  if (object) return object;
 
-// export async function deleteObj(className: string, id: string) {
-//   const queryStr = `mutation UpdateObject {
-//     update(className: "${className}", objectId: "${id}" }) {
-//       updatedAt
-//     }
-//   }`;
-//   const query = await fetch(graphQLUrl, { body: queryStr, headers });
-//   if (!query.ok) throw new Error();
-//   return await query.json();
-// }
+  const newObject = new Parse.Object(className);
+  return newObject;
+}

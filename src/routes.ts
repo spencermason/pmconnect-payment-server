@@ -2,11 +2,7 @@ import * as Express from 'express';
 import type Stripe from 'stripe';
 import { z } from 'zod';
 
-import {
-  isSubscriptionActive,
-  manageSubscriptionStatusChange,
-  stripe,
-} from './stripe';
+import { isSubscriptionActive, stripe } from './stripe';
 import { getUserData } from './utils/parse';
 import webhookHandler from './webhooks';
 
@@ -27,6 +23,7 @@ async function getCheckoutUrl(req: Express.Request) {
 
   const redirect = req.query.redirect as string | undefined;
   const stripeSession = await stripe.checkout.sessions.create({
+    client_reference_id: user.objectId,
     payment_method_types: ['card'],
     billing_address_collection: 'required',
     customer_email: user.email,
@@ -38,7 +35,7 @@ async function getCheckoutUrl(req: Express.Request) {
     ],
     mode: 'subscription',
     subscription_data: {
-      metadata: { clientId: user.id },
+      metadata: { client_id: user.objectId },
     },
     success_url: `${process.env.CALLBACK_URL}/${redirect || ''}`,
     cancel_url: `${process.env.CALLBACK_URL}/`,
@@ -82,10 +79,10 @@ routes.put('/update-subscription', async (req, res) => {
   const user = await getUserData(req);
   if (!user.subscription) res.status(400).send('user not subscribed');
 
+  // TODO add more updating options
   const subscription = await stripe.subscriptions.update(user.subscription.id, {
     cancel_at_period_end: data.data.cancelAtPeriodEnd,
   });
-  manageSubscriptionStatusChange(subscription);
 
   res.status(200).json({ subscription });
 });
