@@ -1,8 +1,7 @@
+import Parse from 'parse/node';
 import Stripe from 'stripe';
 
-export const stripe = new Stripe(process.env.STRIPE_PRIVATE_KEY, {
-  apiVersion: '2023-10-16',
-});
+export const stripe = new Stripe(process.env.STRIPE_PRIVATE_KEY);
 
 const Subscription = Parse.Object.extend('Subscription');
 

@@ -1,16 +1,18 @@
 import { Request, RequestHandler } from 'express';
 import Stripe from 'stripe';
-import { getOrNew, manageSubscriptionStatusChange, stripe } from './stripe';
+import Parse from 'parse/node';
 
-const stripeWebhookSecret = '';
+import { getOrNew, manageSubscriptionStatusChange, stripe } from './stripe';
 
 async function getStripeEvent(req: Request): Promise<Stripe.Event> {
   const sig = req.headers['stripe-signature'];
-  const webhookSecret = stripeWebhookSecret;
   if (!sig) throw new Error('request missing stripe-signature');
-  if (!webhookSecret) throw new Error('missing webhook secret');
 
-  return stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
+  return stripe.webhooks.constructEvent(
+    req.body,
+    sig,
+    process.env.STRIPE_WEBHOOK_SECRET
+  );
 }
 
 const relevantEvents = new Set([
@@ -27,6 +29,8 @@ const relevantEvents = new Set([
 const webhookHandler: RequestHandler = async (req, res) => {
   try {
     const event = await getStripeEvent(req);
+
+    console.log(`🔔  Received event: ${event.id} type: ${event.type}`);
 
     if (!relevantEvents.has(event.type)) return res.json({ received: true });
 
