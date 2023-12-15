@@ -1,4 +1,7 @@
 import { z } from 'zod';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const zodEnv = z.object({
   X_PARSE_APPLICATION_ID: z.string(),

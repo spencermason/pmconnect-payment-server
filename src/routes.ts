@@ -1,15 +1,14 @@
 import * as Express from 'express';
+import type Stripe from 'stripe';
 import { z } from 'zod';
-import Parse from 'parse/node';
 
 import {
   isSubscriptionActive,
   manageSubscriptionStatusChange,
   stripe,
 } from './stripe';
-import webhookHandler from './webhooks';
 import { getUserData } from './utils/parse';
-import Stripe from 'stripe';
+import webhookHandler from './webhooks';
 
 const subscriptionSchema = z.object({
   cancelAtPeriodEnd: z.boolean(),
@@ -26,7 +25,6 @@ async function getCheckoutUrl(req: Express.Request) {
   )
     throw { status: 400, message: 'already subscribed' };
 
-  const metadata = {};
   const redirect = req.query.redirect as string | undefined;
   const stripeSession = await stripe.checkout.sessions.create({
     payment_method_types: ['card'],
@@ -40,9 +38,9 @@ async function getCheckoutUrl(req: Express.Request) {
     ],
     mode: 'subscription',
     subscription_data: {
-      metadata: { ...metadata, clientId: user.id },
+      metadata: { clientId: user.id },
     },
-    success_url: `${process.env.API_URL}/${redirect || ''}`,
+    success_url: `${process.env.CALLBACK_URL}/${redirect || ''}`,
     cancel_url: `${process.env.CALLBACK_URL}/`,
   });
 
@@ -62,9 +60,10 @@ routes.get('/create-checkout-session', async (req, res) => {
 routes.post('/create-checkout-session', async (req, res) => {
   try {
     const sessionUrl = await getCheckoutUrl(req);
-    res.status(200).json({ sessionUrl });
+    res.status(200).json({ url: sessionUrl });
   } catch (err: any) {
-    return res.status(err.status).send(err.message);
+    console.error(err);
+    return res.status(err.status || 500).send(err.message);
   }
 });
 
