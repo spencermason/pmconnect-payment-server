@@ -27,7 +27,7 @@ async function getCheckoutUrl(req: Express.Request) {
     throw { status: 400, message: 'already subscribed' };
 
   const metadata = {};
-  const redirect = '';
+  const redirect = req.query.redirect as string | undefined;
   const stripeSession = await stripe.checkout.sessions.create({
     payment_method_types: ['card'],
     billing_address_collection: 'required',
@@ -43,7 +43,7 @@ async function getCheckoutUrl(req: Express.Request) {
       metadata: { ...metadata, clientId: user.id },
     },
     success_url: `${process.env.API_URL}/${redirect || ''}`,
-    cancel_url: `${process.env.API_URL}/`,
+    cancel_url: `${process.env.CALLBACK_URL}/`,
   });
 
   const sessionUrl = stripeSession.url;
