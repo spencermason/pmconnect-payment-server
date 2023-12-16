@@ -6,13 +6,26 @@ import { isSubscriptionActive, stripe } from './stripe';
 import { getUserData } from './utils/parse';
 import webhookHandler from './webhooks';
 
-const subscriptionSchema = z.object({
-  cancelAtPeriodEnd: z.boolean(),
-});
-
 const routes = Express.Router();
 
+const checkoutSchema = z.object({
+  priceId: z.string(),
+});
+
+function getPriceId(req: Express.Request): string {
+  if (req.method === 'GET') {
+    return process.env.STRIPE_DEFAULT_SUBSCRIBE_PRICE_ID;
+  }
+
+  const body = checkoutSchema.safeParse(req.body);
+  if (!body.success) {
+    throw { status: 400, message: (body as any).error };
+  }
+  return body.data.priceId;
+}
+
 async function getCheckoutUrl(req: Express.Request) {
+  const priceId = getPriceId(req);
   const user = await getUserData(req);
   if (!user) throw { status: 401, message: 'user not logged in' };
   if (
@@ -29,7 +42,7 @@ async function getCheckoutUrl(req: Express.Request) {
     customer_email: user.email,
     line_items: [
       {
-        price: process.env.STRIPE_SUBSCRIBE_PRICE_ID,
+        price: priceId,
         quantity: 1,
       },
     ],
@@ -69,6 +82,10 @@ routes.post(
   Express.raw({ type: 'application/json' }),
   webhookHandler
 );
+
+const subscriptionSchema = z.object({
+  cancelAtPeriodEnd: z.boolean(),
+});
 
 routes.put('/update-subscription', async (req, res) => {
   const data = subscriptionSchema.safeParse(req.body);
