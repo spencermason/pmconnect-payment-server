@@ -3,7 +3,7 @@ import Parse from 'parse/node';
 import Stripe from 'stripe';
 
 import { getDate, stripe } from './stripe';
-import { getOrNew } from './utils/parse';
+import { getOrNewStripeObj } from './utils/parse';
 
 async function getStripeEvent(req: Request): Promise<Stripe.Event> {
   const sig = req.headers['stripe-signature'];
@@ -38,7 +38,7 @@ const webhookHandler: RequestHandler = async (req, res) => {
     await handleEvent(event);
     res.json({ received: true });
   } catch (error: any) {
-    console.error(`❌ Error message: ${error.message}`);
+    console.error(`❌ Error: ${error.stack ?? error.message}`);
     return res.status(400).json(`Webhook Error: ${error.message}`);
   }
 };
@@ -48,7 +48,7 @@ async function handleEvent(event: Stripe.Event) {
   switch (event.type) {
     case 'product.created':
     case 'product.updated':
-      await upsertProduct(event.data.object as Stripe.Product);
+      await upsertProduct(event.data.object);
       break;
     case 'product.deleted':
       const productQuery = new Parse.Query('Prouduct');
@@ -66,12 +66,11 @@ async function handleEvent(event: Stripe.Event) {
       break;
     case 'price.created':
     case 'price.updated':
-      await upsertPrice(event.data.object as Stripe.Price);
+      await upsertPrice(event.data.object);
       break;
     case 'price.deleted':
       const priceQuery = new Parse.Query('Price');
       try {
-        // here you put the objectId that you want to delete
         const object = await priceQuery.get(event.data.object.id);
         try {
           const response: any = await object.destroy();
@@ -86,28 +85,55 @@ async function handleEvent(event: Stripe.Event) {
     case 'customer.subscription.created':
     case 'customer.subscription.updated':
     case 'customer.subscription.deleted': {
-      const subscription = event.data.object as Stripe.Subscription;
-      await manageSubscriptionStatusChange(subscription);
-      // can't update user billing address because of some parse rules
-      // event.type === 'customer.subscription.updated' &&
-      //   addBillingAddress(subscription),
+      await updateSubscription(event.data.object);
       break;
     }
     case 'checkout.session.completed': {
-      const checkoutSession = event.data.object as Stripe.Checkout.Session;
+      const checkoutSession = event.data.object;
       if (checkoutSession.mode !== 'subscription') break;
 
       const subscription = await getSubscriptionFromCheckoutSession(
         checkoutSession
       );
-      await manageSubscriptionStatusChange(subscription);
-      // can't update user billing address because of some parse rules
-      // addBillingAddress(subscription),
+
+      if (!checkoutSession.client_reference_id)
+        throw new Error('Missing checkout.session.client_reference_id');
+      await createSubscription(
+        checkoutSession.client_reference_id,
+        subscription
+      );
       break;
     }
     default:
       throw new Error('Unhandled relevant event!');
   }
+}
+
+async function updateSubscription(subscription: Stripe.Subscription) {
+  const subscriptionQuery = new Parse.Query('Subscription');
+  subscriptionQuery.equalTo('stripeId', subscription.id);
+  const dbSubscription = await subscriptionQuery.first({
+    useMasterKey: true,
+  });
+  if (!dbSubscription) throw new Error('subscription not found in database');
+
+  dbSubscription.set('stripeId', subscription.id);
+  dbSubscription.set('status', subscription.status);
+  dbSubscription.set('metadata', subscription.metadata);
+  dbSubscription.set('cancelAtPeriodEnd', subscription.cancel_at_period_end);
+  dbSubscription.set('created', getDate(subscription.created));
+  dbSubscription.set(
+    'currentPeriodStart',
+    getDate(subscription.current_period_start)
+  );
+  dbSubscription.set(
+    'currentPeriodEnd',
+    getDate(subscription.current_period_end)
+  );
+  dbSubscription.set('endedAt', getDate(subscription.ended_at));
+  dbSubscription.set('cancelAt', getDate(subscription.cancel_at));
+  dbSubscription.set('canceledAt', getDate(subscription.canceled_at));
+  await dbSubscription.save({ useMasterKey: true });
 }
 
 function getId(product: string | { id: string } | null) {
@@ -116,7 +142,7 @@ function getId(product: string | { id: string } | null) {
 }
 
 async function upsertProduct(data: Stripe.Product) {
-  const product = await getOrNew('Product', getId(data));
+  const product = await getOrNewStripeObj('Product', getId(data));
   product.set('active', data.active);
   product.set('name', data.name);
   product.set('metadata', data.metadata);
@@ -124,7 +150,7 @@ async function upsertProduct(data: Stripe.Product) {
 }
 
 async function upsertPrice(data: Stripe.Price) {
-  const price = await getOrNew('Price', getId(data));
+  const price = await getOrNewStripeObj('Price', getId(data));
   price.set('active', data.active);
   price.set('unitAmount', data.unit_amount);
   price.set('currency', data.currency);
@@ -135,16 +161,23 @@ async function upsertPrice(data: Stripe.Price) {
   await price.save({ useMasterKey: true });
 }
 
+type SubscriptionWithPlan = Stripe.Subscription & {
+  plan: Stripe.Plan & { product: Stripe.Product };
+};
 async function getSubscriptionFromCheckoutSession({
   subscription,
-}: Stripe.Checkout.Session): Promise<Stripe.Subscription> {
+}: Stripe.Checkout.Session): Promise<SubscriptionWithPlan> {
   if (!subscription)
     throw new Error('session did not contain subscription data');
   if (typeof subscription === 'string')
-    return await stripe.subscriptions.retrieve(subscription, {
-      expand: ['default_payment_method'],
-    });
-  return subscription;
+    return (await stripe.subscriptions.retrieve(subscription, {
+      expand: ['default_payment_method', 'plan.product'],
+    })) as any as SubscriptionWithPlan;
+  else if (!(subscription as any)?.plan?.product?.name)
+    return (await stripe.subscriptions.retrieve(subscription.id, {
+      expand: ['default_payment_method', 'plan.product'],
+    })) as any as SubscriptionWithPlan;
+  return subscription as any as SubscriptionWithPlan;
 }
 
 async function getPaymentMethodFromSubscription({
@@ -176,18 +209,14 @@ async function addBillingAddress(subscription: Stripe.Subscription) {
   await user.save({ useMasterKey: true });
 }
 
-export async function manageSubscriptionStatusChange(
-  subscription: Stripe.Subscription
+export async function createSubscription(
+  clientId: string,
+  subscription: SubscriptionWithPlan
 ) {
-  const { client_id: clientId } = subscription.metadata;
-  if (!clientId) {
-    throw new Error('user id not found in subscription metadata');
-  }
-
   const userQuery = new Parse.Query(Parse.User);
   const [user, dbSubscription] = await Promise.all([
     userQuery.get(clientId, { useMasterKey: true }),
-    getOrNew('Subscription', subscription.id),
+    getOrNewStripeObj('Subscription', subscription.id),
   ]);
 
   if (!user) throw new Error(`user not found in database with id ${clientId}`);
@@ -195,7 +224,8 @@ export async function manageSubscriptionStatusChange(
   dbSubscription.set('stripeId', subscription.id);
   dbSubscription.set('user', user);
   dbSubscription.set('status', subscription.status);
-  dbSubscription.set('metadata', subscription.metadata);
+  dbSubscription.set('plan', subscription.plan.product.name);
+  dbSubscription.set('interval', subscription.plan.interval);
   dbSubscription.set('cancelAtPeriodEnd', subscription.cancel_at_period_end);
   dbSubscription.set('created', getDate(subscription.created));
   dbSubscription.set(

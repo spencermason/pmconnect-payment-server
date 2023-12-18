@@ -47,9 +47,6 @@ async function getCheckoutUrl(req: Express.Request) {
       },
     ],
     mode: 'subscription',
-    subscription_data: {
-      metadata: { client_id: user.objectId },
-    },
     success_url: `${process.env.CALLBACK_URL}/${redirect || ''}`,
     cancel_url: `${process.env.CALLBACK_URL}/`,
   });

@@ -30,7 +30,7 @@ export async function getUserData(req: Request): Promise<any> {
   return user;
 }
 
-export async function getOrNew(className: string, stripeId: string) {
+export async function getOrNewStripeObj(className: string, stripeId: string) {
   const query = new Parse.Query(className);
   const object = await query
     .equalTo('stripeId', stripeId)
