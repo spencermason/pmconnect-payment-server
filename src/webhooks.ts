@@ -4,6 +4,7 @@ import Stripe from 'stripe';
 
 import { getDate, stripe } from './stripe';
 import { getOrNewStripeObj } from './utils/parse';
+import { get } from 'http';
 
 async function getStripeEvent(req: Request): Promise<Stripe.Event> {
   const sig = req.headers['stripe-signature'];
@@ -25,6 +26,7 @@ const relevantEvents = new Set([
   'customer.subscription.created',
   'customer.subscription.updated',
   'customer.subscription.deleted',
+  'invoice.payment_failed',
 ]);
 
 const webhookHandler: RequestHandler = async (req, res) => {
@@ -88,13 +90,18 @@ async function handleEvent(event: Stripe.Event) {
       await updateSubscription(event.data.object);
       break;
     }
+    case 'invoice.payment_failed': {
+      const invoice = event.data.object;
+      const subscription = await getSubscription(invoice.subscription);
+      // TODO notify customer that payment failed
+      await updateSubscription(subscription);
+      break;
+    }
     case 'checkout.session.completed': {
       const checkoutSession = event.data.object;
       if (checkoutSession.mode !== 'subscription') break;
 
-      const subscription = await getSubscriptionFromCheckoutSession(
-        checkoutSession
-      );
+      const subscription = await getSubscription(checkoutSession.subscription);
 
       if (!checkoutSession.client_reference_id)
         throw new Error('Missing checkout.session.client_reference_id');
@@ -164,9 +171,9 @@ async function upsertPrice(data: Stripe.Price) {
 type SubscriptionWithPlan = Stripe.Subscription & {
   plan: Stripe.Plan & { product: Stripe.Product };
 };
-async function getSubscriptionFromCheckoutSession({
-  subscription,
-}: Stripe.Checkout.Session): Promise<SubscriptionWithPlan> {
+async function getSubscription(
+  subscription: string | Stripe.Subscription
+): Promise<SubscriptionWithPlan> {
   if (!subscription)
     throw new Error('session did not contain subscription data');
   if (typeof subscription === 'string')
