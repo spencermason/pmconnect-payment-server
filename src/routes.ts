@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { isSubscriptionActive, stripe } from './stripe';
 import { getUserData } from './utils/parse';
 import webhookHandler from './webhooks';
+import ExpressError from './utils/error';
 
 const routes = Express.Router();
 
@@ -19,7 +20,7 @@ function getPriceId(req: Express.Request): string {
 
   const body = checkoutSchema.safeParse(req.body);
   if (!body.success) {
-    throw { status: 400, message: (body as any).error };
+    throw new ExpressError((body as any).error, 400);
   }
   return body.data.priceId;
 }
@@ -27,12 +28,7 @@ function getPriceId(req: Express.Request): string {
 async function getCheckoutUrl(req: Express.Request) {
   const priceId = getPriceId(req);
   const user = await getUserData(req);
-  if (!user) throw { status: 401, message: 'user not logged in' };
-  if (
-    user.subscription
-    // && isSubscriptionActive(user.subscription as Stripe.Subscription)
-  )
-    throw { status: 400, message: 'already subscribed' };
+  if (!user) throw new ExpressError('user not logged in', 401);
 
   const redirect = req.query.redirect as string | undefined;
   const stripeSession = await stripe.checkout.sessions.create({
@@ -52,8 +48,7 @@ async function getCheckoutUrl(req: Express.Request) {
   });
 
   const sessionUrl = stripeSession.url;
-  if (!sessionUrl)
-    throw { status: 500, message: 'stripe session url not found' };
+  if (!sessionUrl) throw new ExpressError('stripe session url not found', 500);
   return sessionUrl;
 }
 routes.get('/create-checkout-session', async (req, res) => {
@@ -86,7 +81,7 @@ const subscriptionSchema = z.object({
 routes.post('/create-portal-session', async (req, res) => {
   try {
     const user = await getUserData(req);
-    if (!user) throw { status: 401, message: 'user not logged in' };
+    if (!user) throw new ExpressError('user not logged in', 401);
 
     const query = new Parse.Query('Subscription');
     query.equalTo('user', Parse.User.createWithoutData(user.objectId));
@@ -97,7 +92,7 @@ routes.post('/create-portal-session', async (req, res) => {
 
     const redirect = req.query.redirect as string | undefined;
     const stripeCustomerId = subscription.get('stripeCustomerId');
-    if (!stripeCustomerId) throw new Error('stripeCustomerId not found');
+    if (!stripeCustomerId) throw new ExpressError('stripeCustomerId not found');
 
     const stripePortalSession = await stripe.billingPortal.sessions.create({
       customer: stripeCustomerId,
@@ -105,7 +100,7 @@ routes.post('/create-portal-session', async (req, res) => {
     });
 
     const { url } = stripePortalSession;
-    if (!url) throw new Error('stripe session url not found');
+    if (!url) throw new ExpressError('stripe session url not found');
     res.status(200).json({ url });
   } catch (err: any) {
     console.error(err);

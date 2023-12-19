@@ -5,10 +5,11 @@ import Stripe from 'stripe';
 import { getDate, stripe } from './stripe';
 import { getOrNewStripeObj } from './utils/parse';
 import { get } from 'http';
+import ExpressError from './utils/error';
 
 async function getStripeEvent(req: Request): Promise<Stripe.Event> {
   const sig = req.headers['stripe-signature'];
-  if (!sig) throw new Error('request missing stripe-signature');
+  if (!sig) throw new ExpressError('request missing stripe-signature', 400);
 
   return stripe.webhooks.constructEvent(
     req.body,
@@ -52,37 +53,21 @@ async function handleEvent(event: Stripe.Event) {
     case 'product.updated':
       await upsertProduct(event.data.object);
       break;
-    case 'product.deleted':
+    case 'product.deleted': {
       const productQuery = new Parse.Query('Prouduct');
-      try {
-        // here you put the objectId that you want to delete
-        const object = await productQuery.get(event.data.object.id);
-        try {
-          const response: any = await object.destroy();
-        } catch (error: any) {
-          console.error('Error while deleting ParseObject', error);
-        }
-      } catch (error: any) {
-        console.error('Error while retrieving ParseObject', error);
-      }
+      // here you put the objectId that you want to delete
+      const object = await productQuery.get(event.data.object.id);
+      const response: any = await object.destroy();
       break;
+    }
     case 'price.created':
     case 'price.updated':
       await upsertPrice(event.data.object);
       break;
     case 'price.deleted':
       const priceQuery = new Parse.Query('Price');
-      try {
-        const object = await priceQuery.get(event.data.object.id);
-        try {
-          const response: any = await object.destroy();
-        } catch (error: any) {
-          console.error('Error while deleting ParseObject', error);
-        }
-      } catch (error: any) {
-        console.error('Error while retrieving ParseObject', error);
-      }
-
+      const object = await priceQuery.get(event.data.object.id);
+      const response: any = await object.destroy();
       break;
     case 'customer.subscription.created':
     case 'customer.subscription.updated':
@@ -104,7 +89,10 @@ async function handleEvent(event: Stripe.Event) {
       const subscription = await getSubscription(checkoutSession.subscription);
 
       if (!checkoutSession.client_reference_id)
-        throw new Error('Missing checkout.session.client_reference_id');
+        throw new ExpressError(
+          'Missing checkout.session.client_reference_id',
+          400
+        );
       await createSubscription(
         checkoutSession.client_reference_id,
         subscription
@@ -112,7 +100,7 @@ async function handleEvent(event: Stripe.Event) {
       break;
     }
     default:
-      throw new Error('Unhandled relevant event!');
+      throw new ExpressError('Unhandled relevant event!');
   }
 }
 
@@ -122,14 +110,15 @@ async function updateSubscription(subscription: Stripe.Subscription) {
   const dbSubscription = await subscriptionQuery.first({
     useMasterKey: true,
   });
-  if (!dbSubscription) throw new Error('subscription not found in database');
+  if (!dbSubscription)
+    throw new ExpressError('subscription not found in database', 404);
 
   setSubscriptionFields(subscription, dbSubscription);
   await dbSubscription.save({ useMasterKey: true });
 }
 
 function getId(product: string | { id: string } | null) {
-  if (!product) throw new Error('Missing id');
+  if (!product) throw new ExpressError('Missing id', 400);
   return typeof product == 'string' ? product : product.id;
 }
 
@@ -160,7 +149,7 @@ async function getSubscription(
   subscription: string | Stripe.Subscription
 ): Promise<SubscriptionWithPlan> {
   if (!subscription)
-    throw new Error('session did not contain subscription data');
+    throw new ExpressError('session did not contain subscription data');
   if (typeof subscription === 'string')
     return (await stripe.subscriptions.retrieve(subscription, {
       expand: ['default_payment_method', 'plan.product'],
@@ -176,7 +165,9 @@ async function getPaymentMethodFromSubscription({
   default_payment_method: paymentMethod,
 }: Stripe.Subscription): Promise<Stripe.PaymentMethod> {
   if (!paymentMethod)
-    throw new Error('payment method was not found in subscription object');
+    throw new ExpressError(
+      'payment method was not found in subscription object'
+    );
   if (typeof paymentMethod === 'string')
     return await stripe.paymentMethods.retrieve(paymentMethod, {
       expand: ['billing_details'],
@@ -186,7 +177,8 @@ async function getPaymentMethodFromSubscription({
 
 async function addBillingAddress(subscription: Stripe.Subscription) {
   const { client_id: clientId } = subscription.metadata;
-  if (!clientId) throw new Error('user id not found in subscription metadata');
+  if (!clientId)
+    throw new ExpressError('user id not found in subscription metadata', 400);
 
   const paymentMethod = await getPaymentMethodFromSubscription(subscription);
   const { address, phone } = paymentMethod.billing_details;
@@ -194,7 +186,11 @@ async function addBillingAddress(subscription: Stripe.Subscription) {
   const query = new Parse.Query(Parse.User);
   const user = await query.get(clientId, { useMasterKey: true });
 
-  if (!user) throw new Error(`user not found in database with id ${clientId}`);
+  if (!user)
+    throw new ExpressError(
+      `user not found in database with id ${clientId}`,
+      404
+    );
 
   user.set('billingAddress', address ?? undefined);
   phone && user.set('phone', phone);
@@ -211,7 +207,11 @@ export async function createSubscription(
     getOrNewStripeObj('Subscription', subscription.id),
   ]);
 
-  if (!user) throw new Error(`user not found in database with id ${clientId}`);
+  if (!user)
+    throw new ExpressError(
+      `user not found in database with id ${clientId}`,
+      404
+    );
 
   dbSubscription.set('user', user);
   setSubscriptionFields(subscription, dbSubscription);

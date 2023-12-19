@@ -1,5 +1,6 @@
 import { Request } from 'express';
 import Parse from 'parse/node';
+import ExpressError from './error';
 
 const URL = process.env.API_URL;
 if (!URL) throw new Error('Missing API_URL environment variable');
@@ -21,11 +22,12 @@ const headers = {
 const userEndpoint = `${URL}/users/me`;
 export async function getUserData(req: Request, query?: string): Promise<any> {
   const sessionToken = req.headers['x-parse-session-token'];
-  if (!(typeof sessionToken === 'string')) throw new Error();
+  if (!(typeof sessionToken === 'string'))
+    throw new ExpressError('Request did not provide parse session token', 401);
   const res = await fetch(query ? userEndpoint + '?' + query : userEndpoint, {
     headers: { ...headers, 'X-Parse-Session-Token': sessionToken },
   });
-  if (!res.ok) throw new Error();
+  if (!res.ok) throw new ExpressError('Failed to fetch user data', 401);
   const user = await res.json();
   return user;
 }
