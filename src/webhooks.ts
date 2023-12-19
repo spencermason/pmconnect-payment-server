@@ -72,7 +72,8 @@ async function handleEvent(event: Stripe.Event) {
     case 'customer.subscription.created':
     case 'customer.subscription.updated':
     case 'customer.subscription.deleted': {
-      await updateSubscription(event.data.object);
+      const subscription = await getSubscription(event.data.object.id);
+      await updateSubscription(subscription);
       break;
     }
     case 'invoice.payment_failed': {
@@ -87,6 +88,7 @@ async function handleEvent(event: Stripe.Event) {
       if (checkoutSession.mode !== 'subscription') break;
 
       const subscription = await getSubscription(checkoutSession.subscription);
+      console.log({ subscription: subscription.plan.product });
 
       if (!checkoutSession.client_reference_id)
         throw new ExpressError(
@@ -104,7 +106,7 @@ async function handleEvent(event: Stripe.Event) {
   }
 }
 
-async function updateSubscription(subscription: Stripe.Subscription) {
+async function updateSubscription(subscription: SubscriptionWithPlan) {
   const subscriptionQuery = new Parse.Query('Subscription');
   subscriptionQuery.equalTo('stripeId', subscription.id);
   const dbSubscription = await subscriptionQuery.first({
@@ -219,7 +221,7 @@ export async function createSubscription(
 }
 
 function setSubscriptionFields(
-  subscription: Stripe.Subscription,
+  subscription: SubscriptionWithPlan,
   dbSubscription: Parse.Object<Parse.Attributes>
 ) {
   const customerId =
@@ -230,6 +232,7 @@ function setSubscriptionFields(
   dbSubscription.set('stripeId', subscription.id);
   dbSubscription.set('stripeCustomerId', customerId);
   dbSubscription.set('status', subscription.status);
+  dbSubscription.set('plan', subscription.plan.product.name);
   dbSubscription.set('metadata', subscription.metadata);
   dbSubscription.set('cancelAtPeriodEnd', subscription.cancel_at_period_end);
   dbSubscription.set('created', getDate(subscription.created));
