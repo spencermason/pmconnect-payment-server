@@ -1,5 +1,5 @@
 import * as Express from 'express';
-import type Stripe from 'stripe';
+import Parse from 'parse/node';
 import { z } from 'zod';
 
 import { isSubscriptionActive, stripe } from './stripe';
@@ -29,8 +29,8 @@ async function getCheckoutUrl(req: Express.Request) {
   const user = await getUserData(req);
   if (!user) throw { status: 401, message: 'user not logged in' };
   if (
-    user.subscription &&
-    isSubscriptionActive(user.subscription as Stripe.Subscription)
+    user.subscription
+    // && isSubscriptionActive(user.subscription as Stripe.Subscription)
   )
     throw { status: 400, message: 'already subscribed' };
 
@@ -82,6 +82,35 @@ routes.post(
 
 const subscriptionSchema = z.object({
   cancelAtPeriodEnd: z.boolean(),
+});
+routes.post('/create-portal-session', async (req, res) => {
+  try {
+    const user = await getUserData(req);
+    if (!user) throw { status: 401, message: 'user not logged in' };
+
+    const query = new Parse.Query('Subscription');
+    query.equalTo('user', Parse.User.createWithoutData(user.objectId));
+    const subscription = await query.first();
+
+    if (!subscription || !isSubscriptionActive(subscription.get('status')))
+      return res.status(401).send('user not subscribed');
+
+    const redirect = req.query.redirect as string | undefined;
+    const stripeCustomerId = subscription.get('stripeCustomerId');
+    if (!stripeCustomerId) throw new Error('stripeCustomerId not found');
+
+    const stripePortalSession = await stripe.billingPortal.sessions.create({
+      customer: stripeCustomerId,
+      return_url: `${process.env.CALLBACK_URL}/${redirect || ''}`,
+    });
+
+    const { url } = stripePortalSession;
+    if (!url) throw new Error('stripe session url not found');
+    res.status(200).json({ url });
+  } catch (err: any) {
+    console.error(err);
+    return res.status(err.status || 500).send(err.message);
+  }
 });
 
 routes.put('/update-subscription', async (req, res) => {

@@ -19,14 +19,14 @@ const headers = {
 };
 
 const userEndpoint = `${URL}/users/me`;
-export async function getUserData(req: Request): Promise<any> {
+export async function getUserData(req: Request, query?: string): Promise<any> {
   const sessionToken = req.headers['x-parse-session-token'];
   if (!(typeof sessionToken === 'string')) throw new Error();
-  const query = await fetch(userEndpoint, {
+  const res = await fetch(query ? userEndpoint + '?' + query : userEndpoint, {
     headers: { ...headers, 'X-Parse-Session-Token': sessionToken },
   });
-  if (!query.ok) throw new Error();
-  const user = await query.json();
+  if (!res.ok) throw new Error();
+  const user = await res.json();
   return user;
 }
 

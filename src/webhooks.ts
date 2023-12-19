@@ -124,22 +124,7 @@ async function updateSubscription(subscription: Stripe.Subscription) {
   });
   if (!dbSubscription) throw new Error('subscription not found in database');
 
-  dbSubscription.set('stripeId', subscription.id);
-  dbSubscription.set('status', subscription.status);
-  dbSubscription.set('metadata', subscription.metadata);
-  dbSubscription.set('cancelAtPeriodEnd', subscription.cancel_at_period_end);
-  dbSubscription.set('created', getDate(subscription.created));
-  dbSubscription.set(
-    'currentPeriodStart',
-    getDate(subscription.current_period_start)
-  );
-  dbSubscription.set(
-    'currentPeriodEnd',
-    getDate(subscription.current_period_end)
-  );
-  dbSubscription.set('endedAt', getDate(subscription.ended_at));
-  dbSubscription.set('cancelAt', getDate(subscription.cancel_at));
-  dbSubscription.set('canceledAt', getDate(subscription.canceled_at));
+  setSubscriptionFields(subscription, dbSubscription);
   await dbSubscription.save({ useMasterKey: true });
 }
 
@@ -228,11 +213,24 @@ export async function createSubscription(
 
   if (!user) throw new Error(`user not found in database with id ${clientId}`);
 
-  dbSubscription.set('stripeId', subscription.id);
   dbSubscription.set('user', user);
+  setSubscriptionFields(subscription, dbSubscription);
+  await dbSubscription.save({ useMasterKey: true });
+}
+
+function setSubscriptionFields(
+  subscription: Stripe.Subscription,
+  dbSubscription: Parse.Object<Parse.Attributes>
+) {
+  const customerId =
+    typeof subscription.customer === 'string'
+      ? subscription.customer
+      : subscription.customer.id;
+
+  dbSubscription.set('stripeId', subscription.id);
+  dbSubscription.set('stripeCustomerId', customerId);
   dbSubscription.set('status', subscription.status);
-  dbSubscription.set('plan', subscription.plan.product.name);
-  dbSubscription.set('interval', subscription.plan.interval);
+  dbSubscription.set('metadata', subscription.metadata);
   dbSubscription.set('cancelAtPeriodEnd', subscription.cancel_at_period_end);
   dbSubscription.set('created', getDate(subscription.created));
   dbSubscription.set(
@@ -246,5 +244,4 @@ export async function createSubscription(
   dbSubscription.set('endedAt', getDate(subscription.ended_at));
   dbSubscription.set('cancelAt', getDate(subscription.cancel_at));
   dbSubscription.set('canceledAt', getDate(subscription.canceled_at));
-  await dbSubscription.save({ useMasterKey: true });
 }

@@ -9,10 +9,8 @@ export function getDate(timeStamp: number | null | undefined) {
   else return undefined;
 }
 
-export function isSubscriptionActive(subscription: Stripe.Subscription) {
+export function isSubscriptionActive(status: string) {
   return (
-    subscription.status === 'active' ||
-    subscription.status === 'trialing' ||
-    subscription.status === 'incomplete'
+    status === 'active' || status === 'trialing' || status === 'incomplete'
   );
 }
